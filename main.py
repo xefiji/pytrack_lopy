@@ -65,11 +65,25 @@ def pin_handler(arg):
     time.sleep(0.3)
     machine.deepsleep()
 
-def send(sigfox_socket, lat, lon, alt, speed):    
+def send(sigfox_socket, lat, lon, alt, batt):    
     try:
-        p = struct.pack('f', float(lat)) + struct.pack('f', float(lon)) + struct.pack('f', float(alt))        
+        format = 'ffhh'
+
+        # alt is a string..? cast as int
+        if isinstance(alt, str):
+            alt = int(alt.split(".", 1)[0])
+
+        # batt is a string..?  cast as float
+        if isinstance(batt, str):
+            batt = float(batt)
+
+        # hack to keep voltage as 2 digit int (2 bytes)
+        if isinstance(batt, float):
+            batt = str(batt).replace('.', '')[:2]
+                
+        p = struct.pack(format, float(lat), float(lon), int(alt), int(batt))
         sigfox_socket.send(p)
-        print("Sent {}bytes - #{}: {} - {} - {}".format(struct.calcsize('fff'), sent, coord, rtc.now(), gc.mem_free()))        
+        print("Sent {}bytes - #{}: {} - {} - {}".format(struct.calcsize(format), sent, coord, rtc.now(), gc.mem_free()))        
     except:
         print("Unexpected error:", sys.exc_info()) 
 
@@ -116,6 +130,7 @@ def go_sleep(duration):
     py.go_to_sleep(gps=True)
 
 def read_coords(active_gps):
+    batt = py.read_battery_voltage()
     if active_gps == micropygps:
         # return (45.181881, 5.791920, 227.2, 5.67) # for tests
         # read from gps via I2C
@@ -124,16 +139,15 @@ def read_coords(active_gps):
         for b in raw:
             sentence = gps.update(chr(b))            
             if sentence is not None and gps.satellite_data_updated() and gps.valid:    
-                return (gps.latitude[0], gps.longitude[0], gps.altitude, gps.speed[2])
+                return (gps.latitude[0], gps.longitude[0], gps.altitude, batt)
     elif active_gps == l76:
         coord = gps.coordinates() #coord = (45.181881, 5.791920) # for tests    
         if not (coord == (None, None)):
-            return (coord[0], coord[1], 0.0, 0.0)
+            return (coord[0], coord[1], 0.0, batt)
     elif active_gps == l762:
-        location = gps.get_location()
+        location = gps.get_location()    
         if location["latitude"] is not None and location["longitude"] is not None:
-            return (location["latitude"], location["longitude"], location["altitude"], 0.0)
-        pass
+            return (location["latitude"], location["longitude"], location["altitude"], batt)
 
     return (None, None, None, None)
 
@@ -153,8 +167,8 @@ time.sleep(3) # wait for time to be synced
 start_time = time.time() # will be substracted for elapsed time (micropygps)
 
 while (True):
-    coord = read_coords(active_gps)    
-    if not (coord == (None, None, None, None)):
+    coord = read_coords(active_gps)   
+    if not (coord == (None, None, None, None)):    
         send(sigfox_socket, coord[0], coord[1], coord[2], coord[3]) # actual sigfox send
         time.sleep(1)
         sent += 1
